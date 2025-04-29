@@ -4,13 +4,13 @@
 #include <bluefruit.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
-#include "Motion-detection-with-XIAO-Sense_inferencing.h"
+#include "Motion-detection_inferencing.h"
 
 // Macro for IMU data
 #define ACCELERATION_DUE_TO_GRAVITY 9.81f
 #define GYRO_ANGLE_TO_RADIAN 3.141f / 180.0f
 
-#define BLENAME "XIAO_SENSE_ACTIVITY_TRACKER"
+#define BLENAME "XIAO"
 #define SERVICE_UUID "4D7D1101-EE27-40B2-836C-17505C1044D7"
 #define TX_PRED_CHAR_UUID "4D7D1108-EE27-40B2-836C-17505C1044D7"
 // #define TX_STEP_CHAR_UUID "4D7D1109-EE27-40B2-836C-17505C1044D7"
@@ -24,7 +24,7 @@ float features[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = { 0 };
 
 String pre_motion = "idle";
 
-#define PSIZE 20
+#define PSIZE 30
 String predictions[PSIZE];
 int pCounter = 0;
 int iData = 0;
@@ -33,23 +33,14 @@ long previousMillisSLEEP = 0;  // last time steps checked level was checked, in 
 long currentMillisSLEEP = 0;
 
 long previousMillisSTEPS = 0;
-
-long previousSteps = 0;
-long cadence = 0;
-long previouscadence = 0;
+long currentMillisSTEPS = 0;
+long changeInMilllisSTEPS = 0;
 
 float accX, accY, accZ, gX, gY, gZ;
 int stepCount = 0;
 bool UPDATED = false;
-long currentMillisSTEPS = 0;
-long changeInMilllisSTEPS = 0;
-
-int stepcountforcadenceaverage = 0;
-int totalcandenceforaverage = 0;
 
 bool xbool = false;
-
-// int countdetect = 0;
 
 const int SMOOTHING_WINDOW_SIZE = 80;  // # samples
 
@@ -93,16 +84,6 @@ void setupWakeUpInterrupt() {
   // Set up the accelerometer for Wake-up interrupt.
   // Per the application note, use a two step set up to avoid spurious interrupts
   // Set up values are from the application note, and then adjusted for minimum power
-
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_WAKE_UP_DUR, 0x00);  // No duration
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_WAKE_UP_THS, 0x02);  // Set wake-up threshold
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_TAP_CFG1, 0x80);     // Enable interrupts and apply slope filter; latch mode disabled
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, 0x70);     // Turn on the accelerometer
-  //                                                           // ODR_XL = 833 Hz, FS_XL = ±2 g
-  // delay(4);                                                 // Delay time per application note
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, 0xB0);     // ODR_XL = 1.6 Hz
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL6_G, 0x10);      // High-performance operating mode disabled for accelerometer
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_MD1_CFG, 0x20);      // Wake-up interrupt driven to INT1 pin
 
   /* Values from the application note */
   myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL2_G, 0x60);
@@ -165,7 +146,6 @@ void startAdv(void) {
   Bluefruit.Advertising.start(0);              // 0 = Don't stop advertising after n seconds
 }
 
-
 void setupService(void) {
   myService.begin();
 
@@ -174,11 +154,6 @@ void setupService(void) {
   // MTNcharac.setFixedLen(8);
   MTNcharac.setFixedLen(32);
   MTNcharac.begin();
-
-  // STPcharac.setProperties(CHR_PROPS_NOTIFY);
-  // STPcharac.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
-  // STPcharac.setFixedLen(32);
-  // STPcharac.begin();
 }
 
 void connect_callback(uint16_t conn_handle) {
@@ -188,7 +163,6 @@ void connect_callback(uint16_t conn_handle) {
 
   char central_name[32] = { 0 };
   connection->getPeerName(central_name, sizeof(central_name));
-
 
   digitalWrite(LED_GREEN, LOW);
   digitalWrite(LED_RED, HIGH);
@@ -204,7 +178,7 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
 }
 
 void loop() {
-  delay(10);
+  delay(7);
   String currentMotion;
   long currentMillis = millis();
   if (currentMillis - previousMillisSLEEP >= 60000 && CONNECTEDtoble == false) {
@@ -230,28 +204,31 @@ void loop() {
     xbool = false;
     currentMillisSTEPS = millis();
     changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
-    updateSteps();
+    // updateSteps();
+    stepCount+=2;
     previousMillisSTEPS = currentMillisSTEPS;
     previousMillisSLEEP = currentMillisSTEPS;
   }
   currentMillisSTEPS = millis();
   changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
   if (changeInMilllisSTEPS > 3000) {
-    cadence = 0;
-    displayData();
     previousMillisSTEPS = currentMillisSTEPS;
   }
   collect_data();
-
+  // Serial.println(millis());
   if (iData == EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE) {
     currentMotion = run_detection();
     iData = 0;
     if (CONNECTEDtoble == true) {
       char motionBuffer[MAX_STRING_LENGTH];
       snprintf(motionBuffer, MAX_STRING_LENGTH - 1, "%s %i", currentMotion.c_str(), stepCount);
+      stepCount = 0;
       Serial.println(motionBuffer);
       MTNcharac.notify(currentMotion.c_str());
-      // readData("/motion_log.txt");
+      if (fileHasData("/motion_log.txt")) {
+        readData("/motion_log.txt");
+        deleteFile("/motion_log.txt");
+      }
       if (pCounter != 0) {
         pCounter = 0;
       }
@@ -262,62 +239,23 @@ void loop() {
         String finalMotion = getFinalPrediction();
         char motionBuffer[MAX_STRING_LENGTH];
         snprintf(motionBuffer, MAX_STRING_LENGTH - 1, "%s %i", finalMotion.c_str(), stepCount);
+        stepCount = 0;
+        Serial.println(motionBuffer);
         writeData("/motion_log.txt", (uint8_t*)motionBuffer, strlen(motionBuffer));
       }
     }
   }
 }
+
 void updateSteps() {
   if (UPDATED == false) {
     UPDATED = true;
-    cadence = 60000 / changeInMilllisSTEPS;
-    if (cadence > (previouscadence * 2) && previouscadence > 10) {
-      //do nothing
-    } else {
-      if (stepcountforcadenceaverage >= 3) {
-        cadence = totalcandenceforaverage / stepcountforcadenceaverage;
-        stepcountforcadenceaverage = 0;
-        totalcandenceforaverage = 0;
-        displayData();
-      } else {
-        stepcountforcadenceaverage = stepcountforcadenceaverage + 1;
-        totalcandenceforaverage = totalcandenceforaverage + cadence;
-      }
-      previouscadence = cadence;
-      stepCount++;  //add in
-    }
+    stepCount++;
   }
   if (UPDATED == true) {
     delay(100);
     UPDATED = false;
   }
-}
-
-void displayData() {
-  int running;
-  if (cadence > 70) {
-    running = 3;
-  } else if (cadence > 60) {
-    running = 2;
-  } else if (cadence > 0) {
-    running = 1;
-  } else {
-    running = 2;
-  }
-
-  uint8_t data[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-  //static uint8_t data[4] = {0, 0, 0, 0};
-  data[0] = 3;  //location. of foot. pod
-  //data[1] = 0; // lowByte(CurrentSpeed);
-  data[2] = running;  //0 nothing 1=walk 2=running
-  data[3] = cadence;  //step count
-  //data[4] = 0;
-  data[5] = 0;  //always 0
-  //data[6] = 0;
-  data[7] = stepCount / 10;
-  // if (CONNECTEDtoble == true) {
-  //   STPcharac.notify(data, 8);
-  // }
 }
 
 void goToPowerOff() {
@@ -379,7 +317,7 @@ String getFinalPrediction() {
   int idle = 0;
   int walking = 0;
   int running = 0;
-  int stair_climbing = 0;
+  int stepping_stair = 0;
 
   String finalLabel = "1";
 
@@ -393,13 +331,13 @@ String getFinalPrediction() {
       walking++;
     } else if (label == "running") {
       running++;
-    } else if (label == "goingstair") {
-      stair_climbing++;
+    } else if (label == "stepping_stair") {
+      stepping_stair++;
     }
   }
 
-  if (stair_climbing > PSIZE / 3) {
-    finalLabel = "stair_climbing";
+  if (stepping_stair > PSIZE / 3) {
+    finalLabel = "stepping_stair";
   } else if (running > PSIZE / 3) {
     finalLabel = "running";
   } else if (walking > PSIZE / 3) {
@@ -408,6 +346,39 @@ String getFinalPrediction() {
     finalLabel = "idle";
   }
   return finalLabel;
+}
+
+bool fileHasData(const char* filename) {
+  using namespace Adafruit_LittleFS_Namespace;
+  File myFile(InternalFS);
+
+  // Kiểm tra file có mở được không
+  if (!myFile.open(filename, FILE_O_READ)) {
+    Serial.println("File does not exist");
+    return false;
+  }
+
+  // Kiểm tra size của file
+  size_t fileSize = myFile.size();
+  myFile.close();
+
+  if (fileSize > 0) {
+    Serial.print("File size: ");
+    Serial.print(fileSize);
+    Serial.println(" bytes. Data available.");
+    return true;
+  } else {
+    Serial.println("File exists but is empty");
+    return false;
+  }
+}
+
+void deleteFile(const char* filename) {
+  if (InternalFS.remove(filename)) {
+    Serial.println("File deleted successfully");
+  } else {
+    Serial.println("Failed to delete file");
+  }
 }
 
 void writeData(const char* filename, const uint8_t* data, size_t length) {
@@ -435,19 +406,47 @@ void readData(const char* filename) {
     Serial.println("Failed to open file for reading.");
     return;
   }
-  String line = "";
+  
+  // Đọc theo buffer thay vì từng ký tự một
+  const int bufferSize = 32; // Phù hợp với kích thước fixed length của BLE
+  char buffer[bufferSize];
+  int bytesRead = 0;
+  
+  Serial.println("Reading data from flash...");
+  
   while (myFile.available()) {
-    char c = myFile.read();
-    if (c == '\n' || c == '\r') {
-      if (line.length() > 0) {
-        MTNcharac.notify(line.c_str(), line.length());
-        line = "";
-        delay(10);
+    // Xóa buffer
+    memset(buffer, 0, bufferSize);
+    bytesRead = 0;
+    
+    // Đọc một dòng từ file (tối đa bufferSize-1 bytes)
+    while (myFile.available() && bytesRead < bufferSize - 1) {
+      char c = myFile.read();
+      if (c == '\n' || c == '\r') {
+        // Tìm thấy kết thúc dòng
+        break;
       }
-    } else {
-      line += c;
+      
+      buffer[bytesRead++] = c;
+    }
+    
+    // Nếu đọc được dữ liệu, gửi nó
+    if (bytesRead > 0) {
+      Serial.println(buffer);
+      MTNcharac.notify(buffer, bytesRead);
+      delay(20); // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
+    }
+    
+    // Bỏ qua các ký tự xuống dòng còn lại
+    while (myFile.available()) {
+      char c = myFile.read();
+      if (c != '\n' && c != '\r') {
+        myFile.seek(myFile.position() - 1); // Quay lại 1 ký tự
+        break;
+      }
     }
   }
+  
   myFile.close();
-  Serial.println("\nData read complete.");
+  Serial.println("Data read complete.");
 }
