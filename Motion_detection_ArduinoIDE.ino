@@ -224,7 +224,7 @@ void loop() {
       snprintf(motionBuffer, MAX_STRING_LENGTH - 1, "%s %i", currentMotion.c_str(), stepCount);
       stepCount = 0;
       Serial.println(motionBuffer);
-      MTNcharac.notify(currentMotion.c_str());
+      MTNcharac.notify((uint8_t*)motionBuffer, strlen(motionBuffer));
       if (fileHasData("/motion_log.txt")) {
         readData("/motion_log.txt");
         deleteFile("/motion_log.txt");
