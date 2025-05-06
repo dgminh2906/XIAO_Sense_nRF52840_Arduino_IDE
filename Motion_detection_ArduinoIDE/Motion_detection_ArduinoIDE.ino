@@ -4,7 +4,7 @@
 #include <bluefruit.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
-#include "Motion-detection-with-XIAO-Sense_inferencing.h"
+#include "Motion-detection_inferencing.h"
 
 // Macro for IMU data
 #define ACCELERATION_DUE_TO_GRAVITY 9.81f
@@ -178,7 +178,7 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
 }
 
 void loop() {
-  delay(10);
+  delay(7);
   String currentMotion;
   long currentMillis = millis();
   if (currentMillis - previousMillisSLEEP >= 60000 && CONNECTEDtoble == false) {
@@ -205,7 +205,11 @@ void loop() {
     currentMillisSTEPS = millis();
     changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
     // updateSteps();
+<<<<<<< HEAD:Motion_detection_ArduinoIDE/Motion_detection_ArduinoIDE.ino
     stepCount += 2;
+=======
+    stepCount+=2;
+>>>>>>> 32593438fc3dbad4b19e63091e216b3ddd61e067:Motion_detection_ArduinoIDE.ino
     previousMillisSTEPS = currentMillisSTEPS;
     previousMillisSLEEP = currentMillisSTEPS;
   }
@@ -412,19 +416,19 @@ void readData(const char* filename) {
     Serial.println("Failed to open file for reading.");
     return;
   }
-
+  
   // Đọc theo buffer thay vì từng ký tự một
-  const int bufferSize = 32;  // Phù hợp với kích thước fixed length của BLE
+  const int bufferSize = 32; // Phù hợp với kích thước fixed length của BLE
   char buffer[bufferSize];
   int bytesRead = 0;
-
+  
   Serial.println("Reading data from flash...");
-
+  
   while (myFile.available()) {
     // Xóa buffer
     memset(buffer, 0, bufferSize);
     bytesRead = 0;
-
+    
     // Đọc một dòng từ file (tối đa bufferSize-1 bytes)
     while (myFile.available() && bytesRead < bufferSize - 1) {
       char c = myFile.read();
@@ -432,27 +436,27 @@ void readData(const char* filename) {
         // Tìm thấy kết thúc dòng
         break;
       }
-
+      
       buffer[bytesRead++] = c;
     }
-
+    
     // Nếu đọc được dữ liệu, gửi nó
     if (bytesRead > 0) {
       Serial.println(buffer);
       MTNcharac.notify(buffer, bytesRead);
-      delay(20);  // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
+      delay(20); // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
     }
-
+    
     // Bỏ qua các ký tự xuống dòng còn lại
     while (myFile.available()) {
       char c = myFile.read();
       if (c != '\n' && c != '\r') {
-        myFile.seek(myFile.position() - 1);  // Quay lại 1 ký tự
+        myFile.seek(myFile.position() - 1); // Quay lại 1 ký tự
         break;
       }
     }
   }
-
+  
   myFile.close();
   Serial.println("Data read complete.");
 }
