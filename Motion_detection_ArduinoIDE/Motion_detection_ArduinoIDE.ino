@@ -4,7 +4,7 @@
 #include <bluefruit.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
-#include "Motion-detection_inferencing.h"
+#include "Motion-detection-with-XIAO-Sense_inferencing.h"
 
 // Macro for IMU data
 #define ACCELERATION_DUE_TO_GRAVITY 9.81f
@@ -13,9 +13,8 @@
 #define BLENAME "XIAO"
 #define SERVICE_UUID "4D7D1101-EE27-40B2-836C-17505C1044D7"
 #define TX_PRED_CHAR_UUID "4D7D1108-EE27-40B2-836C-17505C1044D7"
-// #define TX_STEP_CHAR_UUID "4D7D1109-EE27-40B2-836C-17505C1044D7"
 
-#define MAX_STRING_LENGTH 30
+#define MAX_STRING_LENGTH 20
 
 LSM6DS3 myIMU(I2C_MODE, 0x6A);  //I2C device address 0x6A
 
@@ -50,28 +49,13 @@ int _sampleTotal = 0;                 // the running total
 int _sampleAvg = 0;                   // the average
 
 bool CONNECTEDtoble = false;
+bool isSubscribed = false;
 
 BLEService myService(SERVICE_UUID);
 BLECharacteristic MTNcharac(TX_PRED_CHAR_UUID);
-// BLECharacteristic STPcharac(TX_STEP_CHAR_UUID);
 
 void setupAccelerometer() {
-  // Start with LSM6DS3 in disabled to save power
-  // myIMU.settings.gyroEnabled = 0;
-  // myIMU.settings.accelEnabled = 0;
-
   myIMU.begin();
-
-  /* Values from the application note */
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL2_G, 0x60);
-  // myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, 0x60);     // Turn on the accelerometer
-  // ODR_XL = 416 Hz, FS_XL = ±2 g
-  myIMU.writeRegister(LSM6DS3_ACC_GYRO_TAP_CFG1, 0x8E);     // Enable interrupts and tap detection on X, Y, Z-axis
-  myIMU.writeRegister(LSM6DS3_ACC_GYRO_TAP_THS_6D, 0x8C);   // Set tap threshold
-  myIMU.writeRegister(LSM6DS3_ACC_GYRO_INT_DUR2, 0x7F);     // Set Duration, Quiet and Shock time windows
-  myIMU.writeRegister(LSM6DS3_ACC_GYRO_WAKE_UP_THS, 0x80);  // Single & double-tap enabled (SINGLE_DOUBLE_TAP = 1)
-  myIMU.writeRegister(LSM6DS3_ACC_GYRO_MD1_CFG, 0x08);      // Double-tap interrupt driven to INT1 pin
-
   return;
 }
 
@@ -151,8 +135,9 @@ void setupService(void) {
 
   MTNcharac.setProperties(CHR_PROPS_NOTIFY);
   MTNcharac.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
-  // MTNcharac.setFixedLen(8);
-  MTNcharac.setFixedLen(32);
+  // MTNcharac.setFixedLen(20);
+  // MTNcharac.setFixedLen(32);
+  MTNcharac.setMaxLen(20);
   MTNcharac.begin();
 }
 
@@ -173,12 +158,18 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
   digitalWrite(LED_RED, LOW);
 
   CONNECTEDtoble = false;
+  isSubscribed = false;
   (void)conn_handle;
   (void)reason;
 }
 
+// Callback khi client subscribe notify
+void notifyCallback(BLECharacteristic* chr, BLEConnection* conn) {
+  isSubscribed = true;
+}
+
 void loop() {
-  delay(7);
+  delay(10);
   String currentMotion;
   long currentMillis = millis();
   if (currentMillis - previousMillisSLEEP >= 60000 && CONNECTEDtoble == false) {
@@ -205,11 +196,7 @@ void loop() {
     currentMillisSTEPS = millis();
     changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
     // updateSteps();
-<<<<<<< HEAD:Motion_detection_ArduinoIDE/Motion_detection_ArduinoIDE.ino
     stepCount += 2;
-=======
-    stepCount+=2;
->>>>>>> 32593438fc3dbad4b19e63091e216b3ddd61e067:Motion_detection_ArduinoIDE.ino
     previousMillisSTEPS = currentMillisSTEPS;
     previousMillisSLEEP = currentMillisSTEPS;
   }
@@ -223,24 +210,26 @@ void loop() {
   if (iData == EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE) {
     currentMotion = run_detection();
     iData = 0;
-    if (CONNECTEDtoble == true) {
-      char motionBuffer[MAX_STRING_LENGTH];
+    if (CONNECTEDtoble == true && isSubscribed ==true) {
+      char motionBuffer[MAX_STRING_LENGTH] = { 0 };
       if (currentMotion == "stepping_stair") {
         currentMotion = "stepping";
       }
       snprintf(motionBuffer, MAX_STRING_LENGTH - 1, "%s %i", currentMotion.c_str(), stepCount);
       stepCount = 0;
       Serial.println(motionBuffer);
-      MTNcharac.notify((uint8_t*)motionBuffer, strlen(motionBuffer));
       if (fileHasData("/motion_log.txt")) {
         readData("/motion_log.txt");
         deleteFile("/motion_log.txt");
+        delay(2000);
       }
+      MTNcharac.notify((uint8_t*)motionBuffer, strlen(motionBuffer));
       if (pCounter != 0) {
         pCounter = 0;
       }
     } else {
       predictions[pCounter++] = currentMotion;
+      Serial.println(currentMotion);
       if (pCounter == PSIZE) {
         pCounter = 0;
         String finalMotion = getFinalPrediction();
@@ -254,17 +243,6 @@ void loop() {
         writeData("/motion_log.txt", (uint8_t*)motionBuffer, strlen(motionBuffer));
       }
     }
-  }
-}
-
-void updateSteps() {
-  if (UPDATED == false) {
-    UPDATED = true;
-    stepCount++;
-  }
-  if (UPDATED == true) {
-    delay(100);
-    UPDATED = false;
   }
 }
 
@@ -416,19 +394,19 @@ void readData(const char* filename) {
     Serial.println("Failed to open file for reading.");
     return;
   }
-  
+
   // Đọc theo buffer thay vì từng ký tự một
-  const int bufferSize = 32; // Phù hợp với kích thước fixed length của BLE
-  char buffer[bufferSize];
+  const int bufferSize = 20;  // Phù hợp với kích thước fixed length của BLE
+  char buffer[bufferSize] = { 0 };
   int bytesRead = 0;
-  
+
   Serial.println("Reading data from flash...");
-  
+
   while (myFile.available()) {
     // Xóa buffer
     memset(buffer, 0, bufferSize);
     bytesRead = 0;
-    
+
     // Đọc một dòng từ file (tối đa bufferSize-1 bytes)
     while (myFile.available() && bytesRead < bufferSize - 1) {
       char c = myFile.read();
@@ -436,27 +414,26 @@ void readData(const char* filename) {
         // Tìm thấy kết thúc dòng
         break;
       }
-      
       buffer[bytesRead++] = c;
     }
-    
+
     // Nếu đọc được dữ liệu, gửi nó
     if (bytesRead > 0) {
       Serial.println(buffer);
-      MTNcharac.notify(buffer, bytesRead);
-      delay(20); // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
+      MTNcharac.notify((uint8_t*)buffer, bytesRead);
+      delay(20);  // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
     }
-    
+
     // Bỏ qua các ký tự xuống dòng còn lại
     while (myFile.available()) {
       char c = myFile.read();
       if (c != '\n' && c != '\r') {
-        myFile.seek(myFile.position() - 1); // Quay lại 1 ký tự
+        myFile.seek(myFile.position() - 1);  // Quay lại 1 ký tự
         break;
       }
     }
   }
-  
+
   myFile.close();
   Serial.println("Data read complete.");
 }
