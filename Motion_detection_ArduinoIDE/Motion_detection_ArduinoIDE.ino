@@ -29,11 +29,6 @@ int pCounter = 0;
 int iData = 0;
 
 long previousMillisSLEEP = 0;  // last time steps checked level was checked, in ms
-long currentMillisSLEEP = 0;
-
-long previousMillisSTEPS = 0;
-long currentMillisSTEPS = 0;
-long changeInMilllisSTEPS = 0;
 
 float accX, accY, accZ, gX, gY, gZ;
 int stepCount = 0;
@@ -60,14 +55,9 @@ void setupAccelerometer() {
 }
 
 void setupWakeUpInterrupt() {
-  // Initially the system kept turning back on after system_off. Through trial and error
-  // added the accelerator power down and that fixed the issue
   myIMU.writeRegister(LSM6DS3_ACC_GYRO_MD1_CFG, 0x00);   // Power down the accelerometer
   myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, 0x00);  // Disable double-tap interrupt
   myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL2_G, 0x00);
-  // Set up the accelerometer for Wake-up interrupt.
-  // Per the application note, use a two step set up to avoid spurious interrupts
-  // Set up values are from the application note, and then adjusted for minimum power
 
   /* Values from the application note */
   myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL2_G, 0x60);
@@ -135,15 +125,14 @@ void setupService(void) {
 
   MTNcharac.setProperties(CHR_PROPS_NOTIFY);
   MTNcharac.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
-  // MTNcharac.setFixedLen(20);
-  // MTNcharac.setFixedLen(32);
   MTNcharac.setMaxLen(20);
   MTNcharac.begin();
+
+  MTNcharac.setCccdWriteCallback(cccd_callback);
 }
 
 void connect_callback(uint16_t conn_handle) {
   CONNECTEDtoble = true;
-  // Get the reference to current connection
   BLEConnection* connection = Bluefruit.Connection(conn_handle);
 
   char central_name[32] = { 0 };
@@ -163,9 +152,21 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
   (void)reason;
 }
 
-// Callback khi client subscribe notify
-void notifyCallback(BLECharacteristic* chr, BLEConnection* conn) {
-  isSubscribed = true;
+void cccd_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint16_t cccd_value) {
+  if (chr->uuid == MTNcharac.uuid) {
+    Serial.print("CCCD Updated: ");
+
+    if (cccd_value == 0) {
+      Serial.println("Notifications disabled");
+      isSubscribed = false;
+    } else if (cccd_value == 1) {
+      Serial.println("Notifications enabled");
+      isSubscribed = true;
+    } else if (cccd_value == 3) {
+      Serial.println("Notifications & Indications enabled");
+      isSubscribed = true;
+    }
+  }
 }
 
 void loop() {
@@ -188,29 +189,21 @@ void loop() {
   _sampleTotal = _sampleTotal + _samples[_curReadIndex];
   _curReadIndex = (_curReadIndex + 1) % SMOOTHING_WINDOW_SIZE;
   _sampleAvg = _sampleTotal / SMOOTHING_WINDOW_SIZE;
-  // Serial.println(_sampleAvg);
-  if (xbool == false && _sampleAvg < -25) {
+  if (xbool == false && _sampleAvg < -30) {
     xbool = true;
-  } else if (xbool == true && _sampleAvg > -25) {
+  } else if (xbool == true && _sampleAvg > -30) {
     xbool = false;
-    currentMillisSTEPS = millis();
-    changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
-    // updateSteps();
     stepCount += 2;
-    previousMillisSTEPS = currentMillisSTEPS;
-    previousMillisSLEEP = currentMillisSTEPS;
-  }
-  currentMillisSTEPS = millis();
-  changeInMilllisSTEPS = currentMillisSTEPS - previousMillisSTEPS;
-  if (changeInMilllisSTEPS > 3000) {
-    previousMillisSTEPS = currentMillisSTEPS;
+    previousMillisSLEEP = millis();
   }
   collect_data();
   // Serial.println(millis());
   if (iData == EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE) {
     currentMotion = run_detection();
     iData = 0;
-    if (CONNECTEDtoble == true && isSubscribed ==true) {
+
+    if (CONNECTEDtoble == true && isSubscribed == true) {
+      previousMillisSLEEP = millis();
       char motionBuffer[MAX_STRING_LENGTH] = { 0 };
       if (currentMotion == "stepping_stair") {
         currentMotion = "stepping";
@@ -229,7 +222,9 @@ void loop() {
       }
     } else {
       predictions[pCounter++] = currentMotion;
-      Serial.println(currentMotion);
+      Serial.print(currentMotion);
+      Serial.print(" ");
+      Serial.println(stepCount);
       if (pCounter == PSIZE) {
         pCounter = 0;
         String finalMotion = getFinalPrediction();
@@ -252,10 +247,9 @@ void goToPowerOff() {
   digitalWrite(LED_RED, HIGH);
   // Setup up double tap interrupt to wake back up
   setupWakeUpInterrupt();
-  NRF_POWER->SYSTEMOFF = 1;  // Execution should not go beyond this
+  NRF_POWER->SYSTEMOFF = 1; 
 }
 
-// Add in function - not checked
 int raw_feature_get_data(size_t offset, size_t length, float* out_ptr) {
   memcpy(out_ptr, features + offset, length * sizeof(float));
   return 0;
@@ -294,9 +288,9 @@ String run_detection() {
     }
   }
 
-  if (score > 0.7) {
+  // if (score > 0.7) {
     pre_motion = label;
-  }
+  // }
 
   return pre_motion;
 }
@@ -395,8 +389,7 @@ void readData(const char* filename) {
     return;
   }
 
-  // Đọc theo buffer thay vì từng ký tự một
-  const int bufferSize = 20;  // Phù hợp với kích thước fixed length của BLE
+  const int bufferSize = 20;
   char buffer[bufferSize] = { 0 };
   int bytesRead = 0;
 
@@ -407,28 +400,24 @@ void readData(const char* filename) {
     memset(buffer, 0, bufferSize);
     bytesRead = 0;
 
-    // Đọc một dòng từ file (tối đa bufferSize-1 bytes)
     while (myFile.available() && bytesRead < bufferSize - 1) {
       char c = myFile.read();
       if (c == '\n' || c == '\r') {
-        // Tìm thấy kết thúc dòng
         break;
       }
       buffer[bytesRead++] = c;
     }
 
-    // Nếu đọc được dữ liệu, gửi nó
     if (bytesRead > 0) {
       Serial.println(buffer);
       MTNcharac.notify((uint8_t*)buffer, bytesRead);
       delay(20);  // Thời gian nhỏ để BLE hoàn thành việc gửi dữ liệu
     }
 
-    // Bỏ qua các ký tự xuống dòng còn lại
     while (myFile.available()) {
       char c = myFile.read();
       if (c != '\n' && c != '\r') {
-        myFile.seek(myFile.position() - 1);  // Quay lại 1 ký tự
+        myFile.seek(myFile.position() - 1);
         break;
       }
     }
